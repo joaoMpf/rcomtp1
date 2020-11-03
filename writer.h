@@ -47,50 +47,103 @@
 #define L1 0x04
 #define L2 0x0B
 
+
 /*--------------------------Data Link Layer --------------------------*/
 
-// Start connection
+/*
+*Envia trama de supervisão SET e recebe trama UA.
+*Data link Layer
+*/
 int LLOPEN(int fd, int x);
 
-// Stuffing and send packets
+/*
+* Realiza stuffing das tramas I e envia-as.
+* Data link layer
+*/
 int LLWRITE(int fd, unsigned char *mensagem, int size);
 
-// Stop connection
+/*
+* Envia trama de supervisão DISC, recebe DISC e envia UA.
+* Data link layer
+*/
 void LLCLOSE(int fd);
 
-// recieve UA control word
-void ua_sm(int *state, unsigned char *c);
+/*
+* Verifica se o UA foi recebido (com alarme).
+* Data link layer
+*/
+void stateMachineUA(int *state, unsigned char *c);
 
-// read control word
-unsigned char read_cw(int fd);
+/*
+* Espera por uma trama de supervisão e retorna o seu C.
+* Data link layer
+*/
+unsigned char readControlMessageC(int fd);
 
-// Send control word
-void send_cw(int fd, unsigned char C);
+/*
+* Envia uma trama de supervisão, sendo o C recebido como argumento 
+* da função a diferença de cada trama enviada.
+* Data link layer
+*/
+void sendControlMessage(int fd, unsigned char C);
 
-// Calculate bcc
-unsigned char make_bcc(unsigned char *mensagem, int size);
+/*
+* Calcula o valor do BCC2 de uma mensagem.
+* Data link Layer
+*/
+unsigned char calculoBCC2(unsigned char *mensagem, int size);
 
-// Stuffing of bcc
-unsigned char *stuffing(unsigned char BCC2, int *sizeBCC2);
+/*
+* realiza o stuffing do BCC2.
+* Data link layer
+*/
+unsigned char *stuffingBCC2(unsigned char BCC2, int *sizeBCC2);
 
-// random noise on bcc1
-unsigned char *noise_bcc1(unsigned char *packet, int sizePacket);
+/*
+* Geração aleatória de erros no BCC1.
+* Data link layer
+*/
+unsigned char *messUpBCC1(unsigned char *packet, int sizePacket);
 
-// random noise on bcc2
-unsigned char *noise_bcc2(unsigned char *packet, int sizePacket);
+/*
+* Geração aleatória de erros no BCC2.
+* Data link layer
+*/
+unsigned char *messUpBCC2(unsigned char *packet, int sizePacket);
 
-/*-------------------------- Application Layer --------------------------*/
+/*--------------------------Application Link Layer --------------------------*/
 
+/*
+* Base da camada de aplicação pois é esta que controla todo o processo 
+* que ocorre nesta camada e que faz as chamadas às funções da camada 
+* de ligação.
+* Application layer
+*/
 int main(int argc, char **argv);
 
-// Create START and END packets
-unsigned char *control_I(unsigned char state, off_t sizeFile, unsigned char *fileName, int sizeOfFilename, int *sizeControlPackageI);
+/*
+* Cria os pacotes de controlo START e END.
+* Application layer
+*/
+unsigned char *controlPackageI(unsigned char state, off_t sizeFile, unsigned char *fileName, int sizeOfFilename, int *sizeControlPackageI);
 
-// Open file
-unsigned char *open_file(unsigned char *fileName, off_t *sizeFile);
 
-//Add header to packet
-unsigned char *add_header(unsigned char *mensagem, off_t sizeFile, int *sizePacket);
+/*
+* Abre um ficheiro e le o seu conteúdo.
+* Application layer
+*/
+unsigned char *openReadFile(unsigned char *fileName, off_t *sizeFile);
 
-// Split data into packets
-unsigned char *split_data(unsigned char *mensagem, off_t *indice, int *sizePacket, off_t sizeFile);
+/*
+* Acrescenta o cabeçalho do nível de aplicação às tramas.
+* Application layer
+*/
+unsigned char *headerAL(unsigned char *mensagem, off_t sizeFile, int *sizePacket);
+
+/*
+* Divide uma mensagem proveniente do ficheiro em packets.
+* Application layer
+*/
+unsigned char *splitMessage(unsigned char *mensagem, off_t *indice, int *sizePacket, off_t sizeFile);
+
+

@@ -1,28 +1,29 @@
 /*Non-Canonical Input Processing*/
 #include "writer.h"
 
-int alarm_counter = 0;
-int alarm_flag = FALSE;
+int sumAlarms = 0;
+int flagAlarm = FALSE;
 int trama = 0;
-int stopping = FALSE;
-unsigned char packet_counter = 0;
-int tramas_counter = 0;
+int paragem = FALSE;
+unsigned char numMensagens = 0;
+int numTotalTramas = 0;
 
 struct termios oldtio, newtio;
 
+//handler do sinal de alarme
 void alarmHandler()
 {
-  printf("Alarm=%d\n", alarm_counter + 1);
-  alarm_flag = TRUE;
-  alarm_counter++;
+  printf("Alarm=%d\n", sumAlarms + 1);
+  flagAlarm = TRUE;
+  sumAlarms++;
 }
 
 int main(int argc, char **argv)
 {
   int fd;
-  off_t file_size; //tamanho do ficheiro em bytes
-  off_t index = 0;
-  int control = 0;
+  off_t sizeFile; //tamanho do ficheiro em bytes
+  off_t indice = 0;
+  int sizeControlPackageI = 0;
 
   if ((argc < 3) ||
       ((strcmp("/dev/ttyS10", argv[1]) != 0) &&
@@ -42,96 +43,113 @@ int main(int argc, char **argv)
     exit(-1);
   }
 
-  // install alarm
+
+  // instalar handler do alarme
   (void)signal(SIGALRM, alarmHandler);
 
-  unsigned char *msg = open_file((unsigned char *)argv[2], &file_size);
 
-  //starts connection
+  unsigned char *mensagem = openReadFile((unsigned char *)argv[2], &sizeFile);
+
+  //inicio do relógio
+  struct timespec requestStart, requestEnd;
+  clock_gettime(CLOCK_REALTIME, &requestStart);
+
+  //se nao conseguirmos efetuar a ligaçao atraves do set e do ua o programa termina
   if (!LLOPEN(fd, 0))
   {
     return -1;
   }
 
-  int name_size = strlen(argv[2]);
-  unsigned char *name = (unsigned char *)malloc(name_size);
-  name = (unsigned char *)argv[2];
-  unsigned char *start = control_I(C2Start, file_size, name, name_size, &control);
+  int sizeOfFileName = strlen(argv[2]);
+  unsigned char *fileName = (unsigned char *)malloc(sizeOfFileName);
+  fileName = (unsigned char *)argv[2];
+  unsigned char *start = controlPackageI(C2Start, sizeFile, fileName, sizeOfFileName, &sizeControlPackageI);
 
-  LLWRITE(fd, start, control);
-  printf("START sent\n");
+  LLWRITE(fd, start, sizeControlPackageI);
+  printf("Mandou trama START\n");
 
   int sizePacket = sizePacketConst;
+  srand(time(NULL));
 
-  while (sizePacket == sizePacketConst && index < file_size)
+  while (sizePacket == sizePacketConst && indice < sizeFile)
   {
-    //split message in packets
-    unsigned char *packet = split_data(msg, &index, &sizePacket, file_size);
-    printf("packer nr %d sent\n", tramas_counter);
-    // Add header
-    int header_size = sizePacket;
-    unsigned char *msg_header = add_header(packet, file_size, &header_size);
-    //send data
-    if (!LLWRITE(fd, msg_header, header_size))
+    //split mensagem
+    unsigned char *packet = splitMessage(mensagem, &indice, &sizePacket, sizeFile);
+    printf("Mandou packet numero %d\n", numTotalTramas);
+    //header nivel aplicação
+    int headerSize = sizePacket;
+    unsigned char *mensagemHeader = headerAL(packet, sizeFile, &headerSize);
+    //envia a mensagem
+    if (!LLWRITE(fd, mensagemHeader, headerSize))
     {
-      printf("alarm limit !\n");
+      printf("Limite de alarmes atingido\n");
       return -1;
     }
   }
 
-  unsigned char *end = control_I(C2End, file_size, name, name_size, &control);
-  LLWRITE(fd, end, control);
-  printf("END sent\n");
+  unsigned char *end = controlPackageI(C2End, sizeFile, fileName, sizeOfFileName, &sizeControlPackageI);
+  LLWRITE(fd, end, sizeControlPackageI);
+  printf("Mandou trama END\n");
 
   LLCLOSE(fd);
+
+  //fim do relógio
+  clock_gettime(CLOCK_REALTIME, &requestEnd);
+
+  double accum = (requestEnd.tv_sec - requestStart.tv_sec) + (requestEnd.tv_nsec - requestStart.tv_nsec) / 1E9;
+
+  printf("Seconds passed: %f\n", accum);
+
+  sleep(1);
+
 
   close(fd);
   return 0;
 }
 
-unsigned char *add_header(unsigned char *data, off_t file_size, int *packet_size)
+unsigned char *headerAL(unsigned char *mensagem, off_t sizeFile, int *sizePacket)
 {
-  unsigned char *msg = (unsigned char *)malloc(file_size + 4);
-  msg[0] = headerC;
-  msg[1] = packet_counter % 255;
-  msg[2] = (int)file_size / 256;
-  msg[3] = (int)file_size % 256;
-  memcpy(msg + 4, data, *packet_size);
-  *packet_size += 4;
-  packet_counter++;
-  tramas_counter++;
-  return msg;
+  unsigned char *mensagemFinal = (unsigned char *)malloc(sizeFile + 4);
+  mensagemFinal[0] = headerC;
+  mensagemFinal[1] = numMensagens % 255;
+  mensagemFinal[2] = (int)sizeFile / 256;
+  mensagemFinal[3] = (int)sizeFile % 256;
+  memcpy(mensagemFinal + 4, mensagem, *sizePacket);
+  *sizePacket += 4;
+  numMensagens++;
+  numTotalTramas++;
+  return mensagemFinal;
 }
 
-unsigned char *split_data(unsigned char *data, off_t *index, int *packet_size, off_t file_size)
+unsigned char *splitMessage(unsigned char *mensagem, off_t *indice, int *sizePacket, off_t sizeFile)
 {
   unsigned char *packet;
   int i = 0;
-  off_t j = *index;
-  if (*index + *packet_size > file_size)
+  off_t j = *indice;
+  if (*indice + *sizePacket > sizeFile)
   {
-    *packet_size = file_size - *index;
+    *sizePacket = sizeFile - *indice;
   }
-  packet = (unsigned char *)malloc(*packet_size);
-  for (; i < *packet_size; i++, j++)
+  packet = (unsigned char *)malloc(*sizePacket);
+  for (; i < *sizePacket; i++, j++)
   {
-    packet[i] = data[j];
+    packet[i] = mensagem[j];
   }
-  *index = j;
+  *indice = j;
   return packet;
 }
 
-void ua_sm(int *state, unsigned char *c)
+void stateMachineUA(int *state, unsigned char *c)
 {
 
   switch (*state)
   {
-
+  //recebe flag
   case 0:
     if (*c == FLAG)
       *state = 1;
     break;
-
+  //recebe A
   case 1:
     if (*c == A)
       *state = 2;
@@ -143,7 +161,7 @@ void ua_sm(int *state, unsigned char *c)
         *state = 0;
     }
     break;
-
+  //recebe C
   case 2:
     if (*c == UA_C)
       *state = 3;
@@ -155,20 +173,20 @@ void ua_sm(int *state, unsigned char *c)
         *state = 0;
     }
     break;
-
+  //recebe BCC
   case 3:
     if (*c == UA_BCC)
       *state = 4;
     else
       *state = 0;
     break;
-
+  //recebe FLAG final
   case 4:
     if (*c == FLAG)
     {
-      stopping = TRUE;
+      paragem = TRUE;
       alarm(0);
-      printf("UA recieved\n");
+      printf("Recebeu UA\n");
     }
     else
       *state = 0;
@@ -205,6 +223,7 @@ int LLOPEN(int fd, int x)
 
   tcflush(fd, TCIOFLUSH);
 
+
   if (tcsetattr(fd, TCSANOW, &newtio) == -1)
   {
     perror("tcsetattr");
@@ -213,113 +232,114 @@ int LLOPEN(int fd, int x)
 
   printf("New termios structure set\n");
 
+
   unsigned char c;
   do
   {
-    send_cw(fd, SET_C);
+    sendControlMessage(fd, SET_C);
     alarm(TIMEOUT);
-    alarm_flag = 0;
+    flagAlarm = 0;
     int state = 0;
 
-    while (!stopping && !alarm_flag)
+    while (!paragem && !flagAlarm)
     {
       read(fd, &c, 1);
-      ua_sm(&state, &c);
+      stateMachineUA(&state, &c);
     }
-  } while (alarm_flag && alarm_counter < NUMMAX);
-  printf("flag alarm %d\n", alarm_flag);
-  printf("soma %d\n", alarm_counter);
-  if (alarm_flag && alarm_counter == 3)
+  } while (flagAlarm && sumAlarms < NUMMAX);
+  printf("flag alarm %d\n", flagAlarm);
+  printf("soma %d\n", sumAlarms);
+  if (flagAlarm && sumAlarms == 3)
   {
     return FALSE;
   }
   else
   {
-    alarm_flag = FALSE;
-    alarm_counter = 0;
+    flagAlarm = FALSE;
+    sumAlarms = 0;
     return TRUE;
   }
 }
 
-int LLWRITE(int fd, unsigned char *data, int size)
+int LLWRITE(int fd, unsigned char *mensagem, int size)
 {
-  unsigned char bcc;
-  unsigned char *stuffed = (unsigned char *)malloc(sizeof(unsigned char));
-  unsigned char *msg_final = (unsigned char *)malloc((size + 6) * sizeof(unsigned char));
-  int msg_size = size + 6;
-  int bcc_size = 1;
-  bcc = make_bcc(data, size);
-  stuffed = stuffing(bcc, &bcc_size);
-  int reject = FALSE;
+  unsigned char BCC2;
+  unsigned char *BCC2Stuffed = (unsigned char *)malloc(sizeof(unsigned char));
+  unsigned char *mensagemFinal = (unsigned char *)malloc((size + 6) * sizeof(unsigned char));
+  int sizeMensagemFinal = size + 6;
+  int sizeBCC2 = 1;
+  BCC2 = calculoBCC2(mensagem, size);
+  BCC2Stuffed = stuffingBCC2(BCC2, &sizeBCC2);
+  int rejeitado = FALSE;
 
-  msg_final[0] = FLAG;
-  msg_final[1] = A;
+  mensagemFinal[0] = FLAG;
+  mensagemFinal[1] = A;
   if (trama == 0)
   {
-    msg_final[2] = C10;
+    mensagemFinal[2] = C10;
   }
   else
   {
-    msg_final[2] = C11;
+    mensagemFinal[2] = C11;
   }
-  msg_final[3] = (msg_final[1] ^ msg_final[2]);
+  mensagemFinal[3] = (mensagemFinal[1] ^ mensagemFinal[2]);
 
   int i = 0;
   int j = 4;
   for (; i < size; i++)
   {
-    if (data[i] == FLAG)
+    if (mensagem[i] == FLAG)
     {
-      msg_final = (unsigned char *)realloc(msg_final, ++msg_size);
-      msg_final[j] = Escape;
-      msg_final[j + 1] = escapeFlag;
+      mensagemFinal = (unsigned char *)realloc(mensagemFinal, ++sizeMensagemFinal);
+      mensagemFinal[j] = Escape;
+      mensagemFinal[j + 1] = escapeFlag;
       j = j + 2;
     }
     else
     {
-      if (data[i] == Escape)
+      if (mensagem[i] == Escape)
       {
-        msg_final = (unsigned char *)realloc(msg_final, ++msg_size);
-        msg_final[j] = Escape;
-        msg_final[j + 1] = escapeEscape;
+        mensagemFinal = (unsigned char *)realloc(mensagemFinal, ++sizeMensagemFinal);
+        mensagemFinal[j] = Escape;
+        mensagemFinal[j + 1] = escapeEscape;
         j = j + 2;
       }
       else
       {
-        msg_final[j] = data[i];
+        mensagemFinal[j] = mensagem[i];
         j++;
       }
     }
   }
 
-  if (bcc_size == 1)
-    msg_final[j] = bcc;
+  if (sizeBCC2 == 1)
+    mensagemFinal[j] = BCC2;
   else
   {
-    msg_final = (unsigned char *)realloc(msg_final, ++msg_size);
-    msg_final[j] = stuffed[0];
-    msg_final[j + 1] = stuffed[1];
+    mensagemFinal = (unsigned char *)realloc(mensagemFinal, ++sizeMensagemFinal);
+    mensagemFinal[j] = BCC2Stuffed[0];
+    mensagemFinal[j + 1] = BCC2Stuffed[1];
     j++;
   }
-  msg_final[j + 1] = FLAG;
+  mensagemFinal[j + 1] = FLAG;
 
   //mandar mensagem
   do
   {
 
     unsigned char *copia;
-    copia = noise_bcc1(msg_final, msg_size); //altera bcc1
-    copia = noise_bcc2(copia, msg_size);     //altera bcc2
-    write(fd, copia, msg_size);
+    copia = messUpBCC1(mensagemFinal, sizeMensagemFinal); //altera bcc1
+    copia = messUpBCC2(copia, sizeMensagemFinal);         //altera bcc2
+    write(fd, copia, sizeMensagemFinal);
 
-    alarm_flag = FALSE;
+    flagAlarm = FALSE;
     alarm(TIMEOUT);
-    unsigned char C = read_cw(fd);
+    unsigned char C = readControlMessageC(fd);
     if ((C == CRR1 && trama == 0) || (C == CRR0 && trama == 1))
     {
-      printf(" rr %x, trama = %d\n", C, trama);
-      reject = FALSE;
-      alarm_counter = 0;
+      printf("Recebeu rr %x, trama = %d\n", C, trama);
+      rejeitado = FALSE;
+      sumAlarms = 0;
       trama ^= 1;
       alarm(0);
     }
@@ -327,44 +347,46 @@ int LLWRITE(int fd, unsigned char *data, int size)
     {
       if (C == CREJ1 || C == CREJ0)
       {
-        reject = TRUE;
-        printf(" rej %x, trama=%d\n", C, trama);
+        rejeitado = TRUE;
+        printf("Recebeu rej %x, trama=%d\n", C, trama);
         alarm(0);
       }
     }
-  } while ((alarm_flag && alarm_counter < NUMMAX) || reject);
-  if (alarm_counter >= NUMMAX)
+  } while ((flagAlarm && sumAlarms < NUMMAX) || rejeitado);
+  if (sumAlarms >= NUMMAX)
     return FALSE;
   else
     return TRUE;
 }
 
-void send_cw(int fd, unsigned char C)
+void sendControlMessage(int fd, unsigned char C)
 {
-  unsigned char msg[5];
-  msg[0] = FLAG;
-  msg[1] = A;
-  msg[2] = C;
-  msg[3] = msg[1] ^ msg[2];
-  msg[4] = FLAG;
-  write(fd, msg, 5);
+  unsigned char message[5];
+  message[0] = FLAG;
+  message[1] = A;
+  message[2] = C;
+  message[3] = message[1] ^ message[2];
+  message[4] = FLAG;
+  write(fd, message, 5);
 }
 
-unsigned char read_cw(int fd)
+unsigned char readControlMessageC(int fd)
 {
   int state = 0;
   unsigned char c;
   unsigned char C;
 
-  while (!alarm_flag && state != 5)
+  while (!flagAlarm && state != 5)
   {
     read(fd, &c, 1);
     switch (state)
     {
+    //recebe FLAG
     case 0:
       if (c == FLAG)
         state = 1;
       break;
+    //recebe A
     case 1:
       if (c == A)
         state = 2;
@@ -376,7 +398,7 @@ unsigned char read_cw(int fd)
           state = 0;
       }
       break;
-
+    //recebe c
     case 2:
       if (c == CRR0 || c == CRR1 || c == CREJ0 || c == CREJ1 || c == DISC)
       {
@@ -391,12 +413,14 @@ unsigned char read_cw(int fd)
           state = 0;
       }
       break;
+    //recebe BCC
     case 3:
       if (c == (A ^ C))
         state = 4;
       else
         state = 0;
       break;
+    //recebe FLAG final
     case 4:
       if (c == FLAG)
       {
@@ -412,102 +436,102 @@ unsigned char read_cw(int fd)
   return 0xFF;
 }
 
-unsigned char make_bcc(unsigned char *data, int size)
+unsigned char calculoBCC2(unsigned char *mensagem, int size)
 {
-  unsigned char bcc = data[0];
+  unsigned char BCC2 = mensagem[0];
   int i;
   for (i = 1; i < size; i++)
   {
-    bcc ^= data[i];
+    BCC2 ^= mensagem[i];
   }
-  return bcc;
+  return BCC2;
 }
 
-unsigned char *stuffing(unsigned char bcc, int *size)
+unsigned char *stuffingBCC2(unsigned char BCC2, int *sizeBCC2)
 {
-  unsigned char *stuffed;
-  if (bcc == FLAG)
+  unsigned char *BCC2Stuffed;
+  if (BCC2 == FLAG)
   {
-    stuffed = (unsigned char *)malloc(2 * sizeof(unsigned char *));
-    stuffed[0] = Escape;
-    stuffed[1] = escapeFlag;
-    (*size)++;
+    BCC2Stuffed = (unsigned char *)malloc(2 * sizeof(unsigned char *));
+    BCC2Stuffed[0] = Escape;
+    BCC2Stuffed[1] = escapeFlag;
+    (*sizeBCC2)++;
   }
   else
   {
-    if (bcc == Escape)
+    if (BCC2 == Escape)
     {
-      stuffed = (unsigned char *)malloc(2 * sizeof(unsigned char *));
-      stuffed[0] = Escape;
-      stuffed[1] = escapeEscape;
-      (*size)++;
+      BCC2Stuffed = (unsigned char *)malloc(2 * sizeof(unsigned char *));
+      BCC2Stuffed[0] = Escape;
+      BCC2Stuffed[1] = escapeEscape;
+      (*sizeBCC2)++;
     }
   }
 
-  return stuffed;
+  return BCC2Stuffed;
 }
 
-unsigned char *open_file(unsigned char *name, off_t *file_size)
+unsigned char *openReadFile(unsigned char *fileName, off_t *sizeFile)
 {
-  FILE *file;
-  struct stat meta;
-  unsigned char *data;
+  FILE *f;
+  struct stat metadata;
+  unsigned char *fileData;
 
-  if ((file = fopen((char *)name, "rb")) == NULL)
+  if ((f = fopen((char *)fileName, "rb")) == NULL)
   {
     perror("error opening file!");
     exit(-1);
   }
-  stat((char *)name, &meta);
-  (*file_size) = meta.st_size;
-  printf("This file has %ld bytes \n", *file_size);
+  stat((char *)fileName, &metadata);
+  (*sizeFile) = metadata.st_size;
+  printf("This file has %ld bytes \n", *sizeFile);
 
-  data = (unsigned char *)malloc(*file_size);
+  fileData = (unsigned char *)malloc(*sizeFile);
 
-  fread(data, sizeof(unsigned char), *file_size, file);
-  return data;
+  fread(fileData, sizeof(unsigned char), *sizeFile, f);
+  return fileData;
 }
 
-unsigned char *control_I(unsigned char state, off_t file_size, unsigned char *name, int name_size, int *control_size)
+unsigned char *controlPackageI(unsigned char state, off_t sizeFile, unsigned char *fileName, int sizeOfFileName, int *sizeControlPackageI)
 {
-  *control_size = 9 * sizeof(unsigned char) + name_size;
-  unsigned char *packet = (unsigned char *)malloc(*control_size);
+  *sizeControlPackageI = 9 * sizeof(unsigned char) + sizeOfFileName;
+  unsigned char *package = (unsigned char *)malloc(*sizeControlPackageI);
 
   if (state == C2Start)
-    packet[0] = C2Start;
+    package[0] = C2Start;
   else
-    packet[0] = C2End;
-  packet[1] = T1;
-  packet[2] = L1;
-  packet[3] = (file_size >> 24) & 0xFF;
-  packet[4] = (file_size >> 16) & 0xFF;
-  packet[5] = (file_size >> 8) & 0xFF;
-  packet[6] = file_size & 0xFF;
-  packet[7] = T2;
-  packet[8] = name_size;
+    package[0] = C2End;
+  package[1] = T1;
+  package[2] = L1;
+  package[3] = (sizeFile >> 24) & 0xFF;
+  package[4] = (sizeFile >> 16) & 0xFF;
+  package[5] = (sizeFile >> 8) & 0xFF;
+  package[6] = sizeFile & 0xFF;
+  package[7] = T2;
+  package[8] = sizeOfFileName;
   int k = 0;
-  for (; k < name_size; k++)
+  for (; k < sizeOfFileName; k++)
   {
-    packet[9 + k] = name[k];
+    package[9 + k] = fileName[k];
   }
-  return packet;
+  return package;
 }
 
 void LLCLOSE(int fd)
 {
-  send_cw(fd, DISC);
-  printf("DISCK sent\n");
+  sendControlMessage(fd, DISC);
+  printf("Mandou DISC\n");
   unsigned char C;
   //espera ler o DISC
-  C = read_cw(fd);
+  C = readControlMessageC(fd);
   while (C != DISC)
   {
-    C = read_cw(fd);
+    C = readControlMessageC(fd);
   }
-  printf("DISC recieved\n");
-  send_cw(fd, UA_C);
-  printf("UA sentl\n");
-  printf("Disconnected\n");
+  printf("Leu DISC\n");
+  sendControlMessage(fd, UA_C);
+  printf("Mandou UA final\n");
+  printf("Writer terminated \n");
 
   if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
   {
@@ -516,32 +540,32 @@ void LLCLOSE(int fd)
   }
 }
 
-unsigned char *noise_bcc2(unsigned char *packet, int packet_size)
+unsigned char *messUpBCC2(unsigned char *packet, int sizePacket)
 {
-  unsigned char *copia = (unsigned char *)malloc(packet_size);
-  memcpy(copia, packet, packet_size);
+  unsigned char *copia = (unsigned char *)malloc(sizePacket);
+  memcpy(copia, packet, sizePacket);
   int r = (rand() % 100) + 1;
   if (r <= bcc2ErrorPercentage)
   {
-    int i = (rand() % (packet_size - 5)) + 4;
+    int i = (rand() % (sizePacket - 5)) + 4;
     unsigned char randomLetter = (unsigned char)('A' + (rand() % 26));
     copia[i] = randomLetter;
-    printf("noise on BCC2\n");
+    printf("Modifiquei BCC2\n");
   }
   return copia;
 }
 
-unsigned char *noise_bcc1(unsigned char *packet, int packet_size)
+unsigned char *messUpBCC1(unsigned char *packet, int sizePacket)
 {
-  unsigned char *copia = (unsigned char *)malloc(packet_size);
-  memcpy(copia, packet, packet_size);
+  unsigned char *copia = (unsigned char *)malloc(sizePacket);
+  memcpy(copia, packet, sizePacket);
   int r = (rand() % 100) + 1;
   if (r <= bcc1ErrorPercentage)
   {
     int i = (rand() % 3) + 1;
     unsigned char randomLetter = (unsigned char)('A' + (rand() % 26));
     copia[i] = randomLetter;
-    printf("Noise on BCC1\n");
+    printf("Modifiquei BCC1\n");
   }
   return copia;
 }

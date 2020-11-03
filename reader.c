@@ -1,18 +1,18 @@
 /*Non-Canonical Input Processing*/
 #include "reader.h"
 
-int esp = 0;
+int esperado = 0;
 struct termios oldtio, newtio;
 
 int main(int argc, char **argv)
 {
   int fd;
-  int msg_size = 0;
-  unsigned char *msg_final;
-  int start_size = 0;
+  int sizeMessage = 0;
+  unsigned char *mensagemPronta;
+  int sizeOfStart = 0;
   unsigned char *start;
-  off_t final_size = 0;
-  unsigned char *buffer;
+  off_t sizeOfGiant = 0;
+  unsigned char *giant;
   off_t index = 0;
 
   if ((argc < 2) ||
@@ -33,20 +33,21 @@ int main(int argc, char **argv)
     exit(-1);
   }
 
+
   LLOPEN(fd);
-  start = LLREAD(fd, &start_size);
+  start = LLREAD(fd, &sizeOfStart);
 
-  unsigned char *name = "pinguim2.gif";
-  final_size = file_size_start(start);
+  unsigned char *nameOfFile = "pinguim2.gif" ;
+  sizeOfGiant = sizeOfFileFromStart(start);
 
-  buffer = (unsigned char *)malloc(final_size);
+  giant = (unsigned char *)malloc(sizeOfGiant);
 
   while (TRUE)
   {
-    msg_final = LLREAD(fd, &msg_size);
-    if (msg_size == 0)
+    mensagemPronta = LLREAD(fd, &sizeMessage);
+    if (sizeMessage == 0)
       continue;
-    if (check_end(start, start_size, msg_final, msg_size))
+    if (isEndMessage(start, sizeOfStart, mensagemPronta, sizeMessage))
     {
       printf("End message received\n");
       break;
@@ -54,38 +55,38 @@ int main(int argc, char **argv)
 
     int sizeWithoutHeader = 0;
 
-    msg_final = remove_header(msg_final, msg_size, &sizeWithoutHeader);
+    mensagemPronta = removeHeader(mensagemPronta, sizeMessage, &sizeWithoutHeader);
 
-    memcpy(buffer + index, msg_final, sizeWithoutHeader);
+    memcpy(giant + index, mensagemPronta, sizeWithoutHeader);
     index += sizeWithoutHeader;
   }
 
-  printf("data: \n");
+  printf("Mensagem: \n");
   int i = 0;
-  for (; i < final_size; i++)
+  for (; i < sizeOfGiant; i++)
   {
-    printf("%x", buffer[i]);
+    printf("%x", giant[i]);
   }
 
-  create_file(buffer, &final_size, name);
+  createFile(giant, &sizeOfGiant, nameOfFile);
 
   LLCLOSE(fd);
 
   sleep(1);
-
+ 
   close(fd);
   return 0;
 }
 
 void LLCLOSE(int fd)
 {
-  read_cw(fd, DISC_C);
-  printf("DISC recieved\n");
-  send_cw(fd, DISC_C);
-  printf("DISC sent\n");
-  read_cw(fd, UA_C);
-  printf("UA recieved\n");
-  printf("Disconnected\n");
+  readControlMessage(fd, DISC_C);
+  printf("Recebeu DISC\n");
+  sendControlMessage(fd, DISC_C);
+  printf("Mandou DISC\n");
+  readControlMessage(fd, UA_C);
+  printf("Recebeu UA\n");
+  printf("Receiver terminated\n");
 
   tcsetattr(fd, TCSANOW, &oldtio);
 }
@@ -93,7 +94,7 @@ void LLCLOSE(int fd)
 void LLOPEN(int fd)
 {
 
-  if (tcgetattr(fd, &oldtio) == -1)
+if (tcgetattr(fd, &oldtio) == -1)
   { /* save current port settings */
     perror("tcgetattr");
     exit(-1);
@@ -125,34 +126,38 @@ void LLOPEN(int fd)
     exit(-1);
   }
 
-  if (read_cw(fd, SET_C))
+  if (readControlMessage(fd, SET_C))
   {
-    printf("SET recieved\n");
-    send_cw(fd, UA_C);
-    printf("UA sent\n");
+    printf("Recebeu SET\n");
+    sendControlMessage(fd, UA_C);
+    printf("Mandou UA\n");
   }
 }
 
-unsigned char *LLREAD(int fd, int *msg_size)
+unsigned char *LLREAD(int fd, int *sizeMessage)
 {
-  unsigned char *data = (unsigned char *)malloc(0);
-  *msg_size = 0;
+  unsigned char *message = (unsigned char *)malloc(0);
+  *sizeMessage = 0;
   unsigned char c_read;
   int trama = 0;
-  int sending = FALSE;
+  int mandarDados = FALSE;
   unsigned char c;
   int state = 0;
 
   while (state != 6)
   {
     read(fd, &c, 1);
+    //printf("%x\n",c);
     switch (state)
     {
+    //recebe flag
     case 0:
       if (c == FLAG)
         state = 1;
       break;
+    //recebe A
     case 1:
+      //printf("1state\n");
       if (c == A)
         state = 2;
       else
@@ -163,7 +168,9 @@ unsigned char *LLREAD(int fd, int *msg_size)
           state = 0;
       }
       break;
+    //recebe C
     case 2:
+      //printf("2state\n");
       if (c == C10)
       {
         trama = 0;
@@ -184,35 +191,39 @@ unsigned char *LLREAD(int fd, int *msg_size)
           state = 0;
       }
       break;
+    //recebe BCC
     case 3:
+      //printf("3state\n");
       if (c == (A ^ c_read))
         state = 4;
       else
         state = 0;
       break;
+    //recebe FLAG final
     case 4:
+      //printf("4state\n");
       if (c == FLAG)
       {
-        if (check_bcc(data, *msg_size))
+        if (checkBCC2(message, *sizeMessage))
         {
           if (trama == 0)
-            send_cw(fd, RR_C1);
+            sendControlMessage(fd, RR_C1);
           else
-            send_cw(fd, RR_C0);
+            sendControlMessage(fd, RR_C0);
 
           state = 6;
-          sending = TRUE;
-          printf(" RR, T: %d\n", trama);
+          mandarDados = TRUE;
+          printf("Enviou RR, T: %d\n", trama);
         }
         else
         {
           if (trama == 0)
-            send_cw(fd, REJ_C1);
+            sendControlMessage(fd, REJ_C1);
           else
-            send_cw(fd, REJ_C0);
+            sendControlMessage(fd, REJ_C0);
           state = 6;
-          sending = FALSE;
-          printf("REJ, T: %d\n", trama);
+          mandarDados = FALSE;
+          printf("Enviou REJ, T: %d\n", trama);
         }
       }
       else if (c == Escape)
@@ -221,22 +232,23 @@ unsigned char *LLREAD(int fd, int *msg_size)
       }
       else
       {
-        data = (unsigned char *)realloc(data, ++(*msg_size));
-        data[*msg_size - 1] = c;
+        message = (unsigned char *)realloc(message, ++(*sizeMessage));
+        message[*sizeMessage - 1] = c;
       }
       break;
     case 5:
+      //printf("5state\n");
       if (c == escapeFlag)
       {
-        data = (unsigned char *)realloc(data, ++(*msg_size));
-        data[*msg_size - 1] = FLAG;
+        message = (unsigned char *)realloc(message, ++(*sizeMessage));
+        message[*sizeMessage - 1] = FLAG;
       }
       else
       {
         if (c == escapeEscape)
         {
-          data = (unsigned char *)realloc(data, ++(*msg_size));
-          data[*msg_size - 1] = Escape;
+          message = (unsigned char *)realloc(message, ++(*sizeMessage));
+          message[*sizeMessage - 1] = Escape;
         }
         else
         {
@@ -248,25 +260,26 @@ unsigned char *LLREAD(int fd, int *msg_size)
       break;
     }
   }
-  printf("Message size: %d\n", *msg_size);
-  data = (unsigned char *)realloc(data, *msg_size - 1);
+  printf("Message size: %d\n", *sizeMessage);
+  //message tem BCC2 no fim
+  message = (unsigned char *)realloc(message, *sizeMessage - 1);
 
-  *msg_size = *msg_size - 1;
-  if (sending)
+  *sizeMessage = *sizeMessage - 1;
+  if (mandarDados)
   {
-    if (trama == esp)
+    if (trama == esperado)
     {
-      esp ^= 1;
+      esperado ^= 1;
     }
     else
-      *msg_size = 0;
+      *sizeMessage = 0;
   }
   else
-    *msg_size = 0;
-  return data;
+    *sizeMessage = 0;
+  return message;
 }
 
-int check_bcc(unsigned char *message, int sizeMessage)
+int checkBCC2(unsigned char *message, int sizeMessage)
 {
   int i = 1;
   unsigned char BCC2 = message[0];
@@ -282,7 +295,7 @@ int check_bcc(unsigned char *message, int sizeMessage)
     return FALSE;
 }
 
-void send_cw(int fd, unsigned char C)
+void sendControlMessage(int fd, unsigned char C)
 {
   unsigned char message[5];
   message[0] = FLAG;
@@ -293,7 +306,7 @@ void send_cw(int fd, unsigned char C)
   write(fd, message, 5);
 }
 
-int read_cw(int fd, unsigned char C)
+int readControlMessage(int fd, unsigned char C)
 {
   int state = 0;
   unsigned char c;
@@ -354,7 +367,7 @@ int read_cw(int fd, unsigned char C)
   return TRUE;
 }
 
-unsigned char *remove_header(unsigned char *toRemove, int sizeToRemove, int *sizeRemoved)
+unsigned char *removeHeader(unsigned char *toRemove, int sizeToRemove, int *sizeRemoved)
 {
   int i = 0;
   int j = 4;
@@ -367,7 +380,7 @@ unsigned char *remove_header(unsigned char *toRemove, int sizeToRemove, int *siz
   return messageRemovedHeader;
 }
 
-int check_end(unsigned char *start, int sizeStart, unsigned char *end, int sizeEnd)
+int isEndMessage(unsigned char *start, int sizeStart, unsigned char *end, int sizeEnd)
 {
   int s = 1;
   int e = 1;
@@ -391,12 +404,12 @@ int check_end(unsigned char *start, int sizeStart, unsigned char *end, int sizeE
   }
 }
 
-off_t file_size_start(unsigned char *start)
+off_t sizeOfFileFromStart(unsigned char *start)
 {
   return (start[3] << 24) | (start[4] << 16) | (start[5] << 8) | (start[6]);
 }
 
-unsigned char *file_name_start(unsigned char *start)
+unsigned char *nameOfFileFromStart(unsigned char *start)
 {
 
   int L2 = (int)start[8];
@@ -412,7 +425,7 @@ unsigned char *file_name_start(unsigned char *start)
   return name;
 }
 
-void create_file(unsigned char *mensagem, off_t *sizeFile, unsigned char filename[])
+void createFile(unsigned char *mensagem, off_t *sizeFile, unsigned char filename[])
 {
   FILE *file = fopen((char *)filename, "wb+");
   fwrite((void *)mensagem, 1, *sizeFile, file);

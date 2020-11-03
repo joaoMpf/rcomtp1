@@ -32,41 +32,84 @@
 #define escapeFlag 0x5E
 #define escapeEscape 0x5D
 
-/*-------------------------- Data --------------------------*/
+/*--------------------------Data Link Layer --------------------------*/
 
-// Start connection
+/*
+* Lê trama de controlo SET e envia a trama UA.
+* Data link layer
+*/
 void LLOPEN(int fd);
 
-// Read packets and destuffing
+/*
+* Lê tramas I e faz destuffing.
+* Data link layer
+*/
 unsigned char *LLREAD(int fd, int *sizeMessage);
 
-// Stop connection
+/*
+* Lê trama de controlo DISC, envia DISC de volta e recebe UA.
+* Data link Layer
+*/
 void LLCLOSE(int fd);
 
-// Read control word
-int read_cw(int fd, unsigned char C);
+/*
+* Ciclo de leitura que quebra após ler uma trama de controlo C 
+* que seja igual ao C recebido como argumento da função.
+* Data link layer
+*/
+int readControlMessage(int fd, unsigned char C);
 
-//send control word
-void send_cw(int fd, unsigned char C);
+/*
+* Envia uma trama de controlo, sendo o C recebido como argumento da função a diferença de cada trama enviada.
+* Data link layer layer
+*/
+void sendControlMessage(int fd, unsigned char C);
 
-//check bcc integrity
-int check_bcc(unsigned char *message, int sizeMessage);
+/*
+* Verifica se o BCC2 recebido na mensagem está correto.
+* Data link layer
+*/
+int checkBCC2(unsigned char *message, int sizeMessage);
 
-/*-------------------------- Application Layer --------------------------*/
 
+/*--------------------------Application Link Layer --------------------------*/
+
+/*
+* Base da camada de aplicação pois é esta que controla todo o processo 
+* que ocorre nesta camada e que faz as chamadas às funções da camada 
+* de ligação.
+* Application layer
+*/
 int main(int argc, char **argv);
 
-// Get file name from START packet
-unsigned char *file_name_start(unsigned char *start);
 
-// Get size name from START packet
-off_t file_size_start(unsigned char *start);
+/*
+* Obtém nome do ficheiro a partir da trama START.
+* Application layer
+*/
+unsigned char *nameOfFileFromStart(unsigned char *start);
 
-// Remove header from packet
-unsigned char *remove_header(unsigned char *toRemove, int sizeToRemove, int *sizeRemoved);
+/*
+* Obtém tamanho do ficheiro a partir da trama START.
+* Application layer
+*/
+off_t sizeOfFileFromStart(unsigned char *start);
 
-// Check for recieved END packet
-int check_end(unsigned char *start, int sizeStart, unsigned char *end, int sizeEnd);
+/*
+* Remove o cabeçalho do nível de aplicação das tramas I.
+* Application layer
+*/
+unsigned char *removeHeader(unsigned char *toRemove, int sizeToRemove, int *sizeRemoved);
 
-// Create file with recieved data
-void create_file(unsigned char *mensagem, off_t *sizeFile, unsigned char *filename);
+/*
+* Verifica se a trama recebida e a trama END.
+* Application layer
+*/
+int isEndMessage(unsigned char *start, int sizeStart, unsigned char *end, int sizeEnd);
+
+/*
+* Cria ficheiro com os dados recebidos nas tramas I.
+* Application layer
+*/
+void createFile(unsigned char *mensagem, off_t *sizeFile, unsigned char *filename);
+
